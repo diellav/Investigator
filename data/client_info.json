@@ -1,0 +1,25 @@
+{
+ "client_id": "C.1dfcd21bd3d01cc0",
+ "hostname": "TriDsk-WKS02",
+ "fqdn": "TriDsk-WKS02.TriDsk.local",
+ "system": "windows",
+ "release": "Microsoft Windows 10 Pro22H2",
+ "architecture": "amd64",
+ "ip_address": "10.101.2.9:51421",
+ "ping": 1760033673624286,
+ "client_version": "0.74.3",
+ "client_name": "velociraptor",
+ "first_seen_at": 1754529175,
+ "build_time": "2025-05-20T12:31:56Z",
+ "labels": [
+  "WKS02"
+ ],
+ "mac_addresses": [
+  "08:00:27:3a:5e:27"
+ ],
+ "last_interrogate_flow_id": "F.D3JI2666C4O2E",
+ "last_interrogate_artifact_name": "Generic.Client.Info/BasicInformation",
+ "last_hunt_timestamp": 1759977778835600,
+ "last_event_table_version": 1760022371627164467,
+ "labels_timestamp": 1759976740377800694
+}

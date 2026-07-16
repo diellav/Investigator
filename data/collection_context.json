@@ -1,0 +1,69 @@
+{
+ "client_id": "C.1dfcd21bd3d01cc0",
+ "session_id": "F.D3JVHAK4B16NM",
+ "request": {
+  "creator": "admin",
+  "client_id": "C.1dfcd21bd3d01cc0",
+  "artifacts": [
+   "Windows.KapeFiles.Targets"
+  ],
+  "specs": [
+   {
+    "artifact": "Windows.KapeFiles.Targets",
+    "parameters": {
+     "env": [
+      {
+       "key": "LiveUserFiles",
+       "value": "Y"
+      },
+      {
+       "key": "KapeTriage",
+       "value": "Y"
+      },
+      {
+       "key": "AppData",
+       "value": "Y"
+      },
+      {
+       "key": "OneDrive_UserFiles",
+       "value": "Y"
+      }
+     ]
+    }
+   }
+  ],
+  "timeout": 600,
+  "max_upload_bytes": 524288000000000000
+ },
+ "create_time": 1760032938829969,
+ "start_time": 1760036535893544,
+ "active_time": 1760037254410545,
+ "total_uploaded_files": 24906,
+ "total_expected_uploaded_bytes": 5495954447,
+ "total_uploaded_bytes": 4548661365,
+ "total_collected_rows": 52738,
+ "total_logs": 2340,
+ "total_requests": 1,
+ "execution_duration": 718517001000,
+ "state": 2,
+ "artifacts_with_results": [
+  "Windows.KapeFiles.Targets/All File Metadata",
+  "Windows.KapeFiles.Targets/Uploads"
+ ],
+ "query_stats": [
+  {
+   "duration": 718517001000,
+   "last_active": 1760037254410545,
+   "first_active": 1760036535893544,
+   "names_with_response": [
+    "Windows.KapeFiles.Targets/All File Metadata",
+    "Windows.KapeFiles.Targets/Uploads"
+   ],
+   "log_rows": 2340,
+   "uploaded_files": 77698,
+   "uploaded_bytes": 4548661365,
+   "expected_uploaded_bytes": 5495954447,
+   "result_rows": 52738
+  }
+ ]
+}

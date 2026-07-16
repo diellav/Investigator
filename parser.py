@@ -563,3 +563,612 @@ def normalize_collection_context(
             []
         )
     }
+
+# ============================================================
+# NORMALIZIMI I LOG-EVE
+# ============================================================
+
+def parse_log_message(message: Any) -> dict[str, Any]:
+    """
+    E ndan log message në fusha më të qarta.
+
+    Shembuj:
+
+    Selecting AppData
+    ->
+    {
+        "type": "selection",
+        "action": "select",
+        "target": "AppData"
+    }
+
+    ntfs: Selecting glob $MFT
+    ->
+    {
+        "type": "glob_selection",
+        "accessor": "ntfs",
+        "action": "select_glob",
+        "target": "$MFT"
+    }
+    """
+
+    result: dict[str, Any] = {
+        "type": "other",
+        "action": None,
+        "target": None,
+        "accessor": None
+    }
+
+    if not isinstance(message, str):
+        return result
+
+    cleaned_message = message.strip()
+
+    if not cleaned_message:
+        return result
+
+    starting_query_match = re.match(
+        r"Starting query execution for (.+?)[.]?$",
+        cleaned_message,
+        flags=re.IGNORECASE
+    )
+
+    if starting_query_match:
+        result["type"] = "query_start"
+        result["action"] = "start_query"
+        result["target"] = starting_query_match.group(1)
+        return result
+
+    accessor_glob_match = re.match(
+        r"([^:]+):\s*Selecting glob\s+(.+)$",
+        cleaned_message,
+        flags=re.IGNORECASE
+    )
+
+    if accessor_glob_match:
+        result["type"] = "glob_selection"
+        result["action"] = "select_glob"
+        result["accessor"] = accessor_glob_match.group(1).strip()
+        result["target"] = accessor_glob_match.group(2).strip()
+        return result
+
+    selection_match = re.match(
+        r"Selecting\s+(.+)$",
+        cleaned_message,
+        flags=re.IGNORECASE
+    )
+
+    if selection_match:
+        result["type"] = "selection"
+        result["action"] = "select"
+        result["target"] = selection_match.group(1).strip()
+        return result
+
+    if "error" in cleaned_message.lower():
+        result["type"] = "error"
+        result["action"] = "report_error"
+        return result
+
+    if "warning" in cleaned_message.lower():
+        result["type"] = "warning"
+        result["action"] = "report_warning"
+        return result
+
+    return result
+
+
+def normalize_logs(
+    logs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """
+    Normalizon të gjitha log records.
+    """
+
+    normalized_logs: list[dict[str, Any]] = []
+
+    for index, log in enumerate(logs, start=1):
+        message = log.get("message")
+        parsed_message = parse_log_message(message)
+
+        normalized_logs.append({
+            "record_id": f"log-{index}",
+            "timestamp": normalize_timestamp(
+                log.get("client_time")
+            ),
+            "level": log.get("level"),
+            "message": message.strip()
+            if isinstance(message, str)
+            else message,
+            "type": parsed_message.get("type"),
+            "action": parsed_message.get("action"),
+            "target": parsed_message.get("target"),
+            "accessor": parsed_message.get("accessor"),
+            "evidence_source": {
+                "file": "log.json",
+                "record_number": index
+            }
+        })
+
+    return normalized_logs
+
+
+# ============================================================
+# NORMALIZIMI I UPLOAD-EVE
+# ============================================================
+
+def is_upload_complete(
+    file_size: Any,
+    uploaded_size: Any
+) -> bool | None:
+    """
+    Kontrollon nëse file-i është upload-uar plotësisht.
+    """
+
+    if not isinstance(file_size, (int, float)):
+        return None
+
+    if not isinstance(uploaded_size, (int, float)):
+        return None
+
+    return file_size == uploaded_size
+
+
+def normalize_uploads(
+    uploads: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """
+    Normalizon upload records.
+    """
+
+    normalized_uploads: list[dict[str, Any]] = []
+
+    for index, upload in enumerate(uploads, start=1):
+        path = upload.get("vfs_path")
+        file_size = upload.get("file_size")
+        uploaded_size = upload.get("uploaded_size")
+
+        normalized_uploads.append({
+            "record_id": f"upload-{index}",
+            "timestamp": normalize_timestamp(
+                upload.get("Timestamp")
+            ),
+            "start_time": normalize_timestamp(
+                upload.get("started")
+            ),
+            "path": path,
+            "drive": extract_drive(path),
+            "directory": extract_directory(path),
+            "filename": extract_filename(path),
+            "extension": extract_extension(path),
+            "username": extract_username(path),
+            "application": detect_application(path),
+            "type": upload.get("Type"),
+            "accessor": upload.get("_accessor"),
+            "components": upload.get("_Components", []),
+            "client_components": upload.get(
+                "_client_components",
+                []
+            ),
+            "file_size": file_size,
+            "uploaded_size": uploaded_size,
+            "upload_complete": is_upload_complete(
+                file_size,
+                uploaded_size
+            ),
+            "upload_percentage": calculate_percentage(
+                uploaded_size,
+                file_size
+            ),
+            "evidence_source": {
+                "file": "uploads.json",
+                "record_number": index,
+                "original_path": path
+            }
+        })
+
+    return normalized_uploads
+
+
+# ============================================================
+# NORMALIZIMI I REQUESTS.JSON
+# ============================================================
+
+def recursively_find_env_lists(
+    value: Any
+) -> list[list[dict[str, Any]]]:
+    """
+    Kërkon rekursivisht të gjitha listat që quhen 'env'.
+    """
+
+    found_env_lists: list[list[dict[str, Any]]] = []
+
+    if isinstance(value, dict):
+        for key, child_value in value.items():
+            if key == "env" and isinstance(child_value, list):
+                found_env_lists.append(child_value)
+
+            found_env_lists.extend(
+                recursively_find_env_lists(child_value)
+            )
+
+    elif isinstance(value, list):
+        for item in value:
+            found_env_lists.extend(
+                recursively_find_env_lists(item)
+            )
+
+    return found_env_lists
+
+
+def recursively_find_values_by_key(
+    value: Any,
+    target_key: str
+) -> list[Any]:
+    """
+    Kërkon rekursivisht vlerat për një key të caktuar.
+    """
+
+    found_values: list[Any] = []
+
+    if isinstance(value, dict):
+        for key, child_value in value.items():
+            if key == target_key:
+                found_values.append(child_value)
+
+            found_values.extend(
+                recursively_find_values_by_key(
+                    child_value,
+                    target_key
+                )
+            )
+
+    elif isinstance(value, list):
+        for item in value:
+            found_values.extend(
+                recursively_find_values_by_key(
+                    item,
+                    target_key
+                )
+            )
+
+    return found_values
+
+
+def extract_request_modules(
+    requests_data: Any
+) -> tuple[list[str], list[str]]:
+    """
+    Nxjerr:
+    - modulet e aktivizuara me value = Y;
+    - modulet e përmendura pa value Y.
+
+    Kjo bëhet pa u varur fort nga struktura e requests.json.
+    """
+
+    enabled_modules: set[str] = set()
+    available_modules: set[str] = set()
+
+    env_lists = recursively_find_env_lists(requests_data)
+
+    for env_list in env_lists:
+        for item in env_list:
+            if not isinstance(item, dict):
+                continue
+
+            key = item.get("key")
+            value = item.get("value")
+
+            if not key:
+                continue
+
+            key_text = str(key)
+
+            # Fushat teknike që nuk janë module evidence.
+            ignored_keys = {
+                "UseAutoAccessor",
+                "Device",
+                "VSSAnalysisAge",
+                "KapeRules"
+            }
+
+            if key_text in ignored_keys:
+                continue
+
+            available_modules.add(key_text)
+
+            if str(value).upper() == "Y":
+                enabled_modules.add(key_text)
+
+    return (
+        sorted(enabled_modules),
+        sorted(available_modules)
+    )
+
+
+def normalize_requests(requests_data: Any) -> dict[str, Any]:
+    """
+    Përmbledh requests.json në vend që ta ruajë të gjithë
+    strukturën e madhe.
+    """
+
+    enabled_modules, available_modules = extract_request_modules(
+        requests_data
+    )
+
+    session_ids = recursively_find_values_by_key(
+        requests_data,
+        "session_id"
+    )
+
+    request_ids = recursively_find_values_by_key(
+        requests_data,
+        "request_id"
+    )
+
+    artifact_values = recursively_find_values_by_key(
+        requests_data,
+        "artifact"
+    )
+
+    artifacts: list[str] = []
+
+    for value in artifact_values:
+        if isinstance(value, str):
+            artifacts.append(value)
+
+    return {
+        "session_ids": sorted(
+            set(str(item) for item in session_ids if item)
+        ),
+        "request_ids": sorted(
+            set(str(item) for item in request_ids if item)
+        ),
+        "artifacts": sorted(set(artifacts)),
+        "enabled_modules": enabled_modules,
+        "available_modules_count": len(available_modules),
+        "available_modules": available_modules
+    }
+
+
+# ============================================================
+# KRIJIMI I DATASET-IT FINAL
+# ============================================================
+
+def build_summary(
+    normalized_client: dict[str, Any],
+    normalized_collection: dict[str, Any],
+    normalized_logs: list[dict[str, Any]],
+    normalized_uploads: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """
+    Krijon një përmbledhje të vogël të dataset-it.
+    """
+
+    complete_uploads = sum(
+        1
+        for upload in normalized_uploads
+        if upload.get("upload_complete") is True
+    )
+
+    incomplete_uploads = sum(
+        1
+        for upload in normalized_uploads
+        if upload.get("upload_complete") is False
+    )
+
+    zero_byte_files = sum(
+        1
+        for upload in normalized_uploads
+        if upload.get("file_size") == 0
+    )
+
+    usernames = sorted({
+        upload["username"]
+        for upload in normalized_uploads
+        if upload.get("username")
+    })
+
+    applications = sorted({
+        upload["application"]
+        for upload in normalized_uploads
+        if upload.get("application")
+    })
+
+    log_levels: dict[str, int] = {}
+
+    for log in normalized_logs:
+        level = log.get("level") or "UNKNOWN"
+        log_levels[level] = log_levels.get(level, 0) + 1
+
+    return {
+        "client_id": normalized_client.get("client_id"),
+        "hostname": normalized_client.get("hostname"),
+        "session_id": normalized_collection.get("session_id"),
+        "log_records_loaded": len(normalized_logs),
+        "upload_records_loaded": len(normalized_uploads),
+        "complete_upload_records": complete_uploads,
+        "incomplete_upload_records": incomplete_uploads,
+        "zero_byte_file_records": zero_byte_files,
+        "identified_usernames": usernames,
+        "identified_applications": applications,
+        "log_levels": log_levels
+    }
+
+
+def build_investigation_dataset() -> dict[str, Any]:
+    """
+    Hapat kryesorë:
+
+    1. Lexon 5 file-t.
+    2. I kthen në objekte Python.
+    3. I normalizon.
+    4. Krijon një objekt të vetëm.
+    """
+
+    print("1. Duke lexuar client_info.json...")
+    client_info = load_json(CLIENT_INFO_FILE)
+
+    print("2. Duke lexuar collection_context.json...")
+    collection_context = load_json(
+        COLLECTION_CONTEXT_FILE
+    )
+
+    print("3. Duke lexuar requests.json...")
+    requests_data = load_json_or_jsonl(REQUESTS_FILE)
+
+    print("4. Duke lexuar log.json si JSONL...")
+    logs = load_jsonl(LOG_FILE)
+
+    print("5. Duke lexuar uploads.json si JSONL...")
+    uploads = load_jsonl(UPLOADS_FILE)
+
+    print("6. Duke normalizuar client info...")
+    normalized_client = normalize_client_info(client_info)
+
+    print("7. Duke normalizuar collection context...")
+    normalized_collection = normalize_collection_context(
+        collection_context
+    )
+
+    print("8. Duke normalizuar requests...")
+    normalized_requests = normalize_requests(requests_data)
+
+    print("9. Duke normalizuar logs...")
+    normalized_logs = normalize_logs(logs)
+
+    print("10. Duke normalizuar uploads...")
+    normalized_uploads = normalize_uploads(uploads)
+
+    print("11. Duke krijuar përmbledhjen...")
+    summary = build_summary(
+        normalized_client,
+        normalized_collection,
+        normalized_logs,
+        normalized_uploads
+    )
+
+    investigation = {
+        "dataset_metadata": {
+            "name": "AI-assisted investigation dataset",
+            "created_at": datetime.now(
+                timezone.utc
+            ).isoformat().replace("+00:00", "Z"),
+            "source_files": [
+                "client_info.json",
+                "collection_context.json",
+                "requests.json",
+                "log.json",
+                "uploads.json"
+            ],
+            "description": (
+                "Normalized forensic collection data prepared "
+                "for evidence-based investigation agents."
+            )
+        },
+        "summary": summary,
+        "client": normalized_client,
+        "collection": normalized_collection,
+        "requests": normalized_requests,
+        "logs": normalized_logs,
+        "uploads": normalized_uploads
+    }
+
+    return investigation
+
+
+def save_dataset(dataset: dict[str, Any]) -> None:
+    """
+    E ruan dataset-in final në output/normalized_dataset.json.
+    """
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    with OUTPUT_FILE.open(
+        "w",
+        encoding="utf-8"
+    ) as file:
+        json.dump(
+            dataset,
+            file,
+            indent=2,
+            ensure_ascii=False
+        )
+
+
+def print_final_result(dataset: dict[str, Any]) -> None:
+    """
+    Shfaq rezultatet kryesore në terminal.
+    """
+
+    summary = dataset["summary"]
+    client = dataset["client"]
+    agent = client["incident_response_agent"]
+
+    print("\n========================================")
+    print("NORMALIZIMI U KRYE ME SUKSES")
+    print("========================================")
+
+    print(f"Client ID: {summary.get('client_id')}")
+    print(f"Hostname: {summary.get('hostname')}")
+    print(f"Session ID: {summary.get('session_id')}")
+
+    print(
+        "Incident response agent: "
+        f"{agent.get('name')} {agent.get('version')}"
+    )
+
+    print(
+        f"Logs të lexuara: "
+        f"{summary.get('log_records_loaded')}"
+    )
+
+    print(
+        f"Uploads të lexuara: "
+        f"{summary.get('upload_records_loaded')}"
+    )
+
+    print(
+        f"Uploads të plota: "
+        f"{summary.get('complete_upload_records')}"
+    )
+
+    print(
+        f"Uploads jo të plota: "
+        f"{summary.get('incomplete_upload_records')}"
+    )
+
+    print(
+        f"Users të identifikuar: "
+        f"{summary.get('identified_usernames')}"
+    )
+
+    print(
+        f"\nDataset-i u ruajt këtu:\n{OUTPUT_FILE}"
+    )
+
+
+def main() -> None:
+    """
+    Pika hyrëse e programit.
+    """
+
+    try:
+        dataset = build_investigation_dataset()
+        save_dataset(dataset)
+        print_final_result(dataset)
+
+    except FileNotFoundError as error:
+        print("\nGabim: mungon një file.")
+        print(error)
+
+    except ValueError as error:
+        print("\nGabim gjatë leximit të JSON-it.")
+        print(error)
+
+    except Exception as error:
+        print("\nNdodhi një gabim i papritur.")
+        print(f"{type(error).__name__}: {error}")
+
+
+if __name__ == "__main__":
+    main()
